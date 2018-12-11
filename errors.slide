@@ -1,0 +1,279 @@
+if err != nil. Некоторые способы работы с ошибками
+07 Dec 2018
+Tags: meetup, go, error handling
+
+Виталий Левченко
+levtchenko@gmail.com
+
+* Обо мне
+
+* Проблема
+
+ func Pay(user, order) error {
+ 	order.Init()
+ 	err := order.CanBuy(user)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	err = order.Process()
+ 	if err != nil {
+ 		return err
+ 	}
+ 	err = order.Save()
+ 	if err != nil {
+ 		return err
+ 	}
+ }
+
+* Проблема
+
+ Main loop error: unexpected EOF
+
+* Проблема
+
+ func Pay(user, order) error {
+ 	order.Init()
+ 	err := order.CanBuy(user)
+ 	if err != nil {
+ 		return errs.Wrap(err)
+ 	}
+ 	err = order.Process()
+ 	if err != nil {
+ 		return errs.Wrap(err)
+ 	}
+ 	err = order.Save()
+ 	if err != nil {
+ 		return errs.Wrap(err)
+ 	}
+ }
+
+* Есть нюансы
+
+ 	user, err := db.GetUser(userID)
+ 	if err == sql.ErrNoRows {
+ 		logger.Warn("No user found")
+ 		return nil, nil
+ 	}
+ 	if err != nil {
+ 		return errs.Wrap(err)
+ 	}
+
+* Вариант решения
+
+ func (s Service) Pay(user, order) error {
+  	if s.err != nil {
+  		return s.err
+  	}
+ 	order.Init()
+ 	s.err = order.CanBuy(user)
+ 	s.err = order.Process()
+ 	s.err = order.Save()
+ 	return s.err
+ }
+
+* Бонус
+
+ func (s Service) ProcessPayment(user) error {
+ 	order := CreateOrder()
+ 	s.Pay(user, order)	
+ 	if s.err != nil {
+ 		s.order.Fail()
+ 		return s.err
+ 	}
+ 	return nil
+ }
+
+* Теория
+
+* Перехватываемые ошибки
+
+- sql.ErrNoRows
+- EOF
+
+
+* Неперехватываемые ошибки
+
+- Can't connect to db
+- Validation errors
+
+* Паники
+
+ func (s Service) Pay(user, order) {
+ 	order.Init()
+ 	err = order.CanBuy(user)
+ 	errs.CheckErr(err, "check validity", s.logger)
+ 	err = order.Process()
+ 	errs.CheckErr(err, "process order", s.logger)
+ 	err = order.Save()
+ 	errs.CheckErr(err, "save order", s.logger)
+ }
+
+* Паники
+
+ func checkErr(err, msg, logger) {
+ 	if err == nil {
+ 		return
+ 	}
+ 	logger.Error(msg, err)
+ 	panic(err)
+ }
+
+* Паники
+
+ func checkErr(err, logger) {
+ 	if err == nil {
+ 		return
+ 	}
+ 	logger.Error(err)
+ 	panic(HTTPErr{err})
+ }
+
+* Паники
+
+ if r := recover(); r != nil {
+ 	if httpErr, ok := r.(HTTPErr); ok {
+ 		c.SendError(httpErr)
+ 		return
+ 	}
+ 	... log and process panic
+ }
+
+* Паники
+
+ func (s Service) Pay(user, order) {
+ 	order.Init()
+ 	s.l.CheckErr(order.CanBuy(user), "check order validity")
+ 	s.l.CheckErr(order.Process(), "process order")
+ 	s.l.CheckErr(order.Save(), "save order")
+ }
+
+* Бонусы
+
+ func (l logger) LogErr(err, msg) {
+ 	if err != nil {
+ 	 	logger.Error(msg, err)
+ 	} else {
+ 		logger.Info(msg)
+ 	}
+ }
+
+* Обработка ошибок
+
+ func (s Service) Pay(user, order) {
+ 	order.Init()
+ 	err := order.CanBuy(user)
+ 	if err == model.ErrOrderInvalid {
+ 		err = nil
+ 		order.Fix()
+ 	}
+ 	s.l.CheckErr(err, "check order validity")
+ 	s.l.CheckErr(order.Process(), "process order")
+ 	s.l.CheckErr(order.Save(), "save order")
+ }
+
+* Обработка ошибок
+
+ func (s Service) Pay(user, order) {
+ 	order.Init()
+ 	if ok := order.CanBuy(user); ok {
+ 		order.Fix()
+ 	}
+ 	s.l.CheckErr(order.Process(), "process order")
+ 	s.l.CheckErr(order.Save(), "save order")
+ }
+
+* Результат
+
+ func (s Service) Pay(user, order) {
+ 	order.Init()
+ 	if ok := order.CanBuy(user); ok {
+ 		order.Fix()
+ 	}
+ 	order.Process()
+ 	order.Save()
+ }
+
+* На нижнем уровне
+
+ func (o Order) CanBuy(user) (ok bool) {
+ 	data, err := o.RetrieveExternalData()
+ 	o.l.CheckErr(err, "get external order data")
+ 	err := data.IsValid(user)
+ 	o.l.LogErr(err, "check order validity by data")
+ 	return err == nil
+ }
+
+* Или так
+
+ func (s Service) GetUser() (user User) {
+ 	user = NewUser
+ 	var err error
+ 	user.Field1, err = s.db.GetUserField1()
+ 	s.l.CheckErr(err, "get user field 1")
+ 	user.Field2, err = s.redis.GetUserField2()
+ 	s.l.CheckErr(err, "get user field 2")
+ 	user.Field3, err = s.cache.GetUserField3()
+ 	s.l.CheckErr(err, "get user field3")
+ 	user.Field4, err = s.db.GetUserField4()
+ 	s.l.CheckErr(err, "get user field4")
+ 	user.Field5, err = s.db.GetUserField5()
+ 	s.l.CheckErr(err, "get user field5")
+ 	return user
+ }
+
+* На нижнем уровне
+
+ func (o Order) CanBuy(user) (ok bool) {
+ 	data, err := o.RetrieveExternalData()
+ 	o.l.CheckErr(err, "get external order data")
+ 	err := data.IsValid(user)
+ 	o.l.LogErr(err, "check order validity by data")
+ 	return err == nil
+ }
+
+* Тонкости
+
+- Вызов order.Fail() на ошибку. 
+
+ defer func() {
+ 	if r := recover() {
+ 		o.Fail()
+ 		panic(r)
+ 	}
+ }
+
+* Go 2
+
+ func (s Service) Pay(user, order) error {
+ 	handle err {
+ 		order.Fail()
+ 		log.Error(err)
+ 		return err
+ 	}
+ 	order.Init()
+ 	check order.CanBuy(user)
+ 	check order.Process()
+ 	check order.Save()
+ }
+
+* Go 1.13
+
+ if err != nil {
+ 	return errors.Wrap(err, "process something")
+ }
+	 
+ fmt.Printf("%+v", err)
+	 
+ write users database:
+     more detail here
+ --- call myserver.Method:
+ --- dial myserver:3333:
+ --- open /etc/resolv.conf:
+ --- permission denied
+
+
+* Подписывайтесь
+
+- t.me/goleningrad
+- meetup.com/ru-RU/Golang-Peter/
+
